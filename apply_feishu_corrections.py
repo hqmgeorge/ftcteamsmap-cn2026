@@ -1,0 +1,258 @@
+import requests
+import json
+import os
+import re
+import time
+
+# ── Config ────────────────────────────────────────────────
+FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
+FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
+BITABLE_APP_TOKEN = os.environ.get("BITABLE_APP_TOKEN")
+BITABLE_TABLE_ID = os.environ.get("BITABLE_TABLE_ID")
+FTC_JSON_PATH = "ftc_teams.json"
+
+# ── Step 1: Get Feishu access token ───────────────────────
+
+
+def get_access_token():
+    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    res = requests.post(url, json={
+        "app_id": FEISHU_APP_ID,
+        "app_secret": FEISHU_APP_SECRET
+    })
+    return res.json()["tenant_access_token"]
+
+# ── Step 2: Read approved + not yet applied rows ───────────
+
+
+def get_approved_rows(token):
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records"
+    headers = {"Authorization": f"Bearer {token}"}
+    res = requests.get(url, headers=headers)
+    records = res.json().get("data", {}).get("items", [])
+
+    approved = []
+    for r in records:
+        fields = r.get("fields", {})
+        is_approved = fields.get("approved", False)
+        is_applied = fields.get("applied", False)
+        if is_approved and not is_applied:
+            approved.append({
+                "record_id":   r["record_id"],
+                "team_number": str(int(float(fields.get("team_number", 0)))).strip(),
+                "city":        str(fields.get("new_city", "")).strip(),
+                "state":       str(fields.get("new_state", "")).strip(),
+                "country":     str(fields.get("new_country", "")).strip(),
+                "name_full":   str(fields.get("队名", "")).strip(),
+                "name_short":  str(fields.get("队名简称", "")).strip(),
+            })
+    return approved
+
+# ── Step 3: Detect Chinese characters ─────────────────────
+
+
+def has_chinese(text):
+    return bool(re.search(r'[\u4e00-\u9fff]', text or ""))
+
+# ── Step 4: Translate Chinese → English via Google ────────
+
+
+def translate_to_english(text):
+    if not text or not has_chinese(text):
+        return text
+    try:
+        url = "https://translate.googleapis.com/translate_a/single"
+        params = {
+            "client": "gtx",
+            "sl": "zh-CN",
+            "tl": "en",
+            "dt": "t",
+            "q": text,
+        }
+        res = requests.get(url, params=params, timeout=5)
+        translated = res.json()[0][0][0]
+        print(f"  Translated '{text}' → '{translated}'")
+        return translated
+    except Exception as e:
+        print(f"  Translation failed for '{text}': {e}")
+        return text
+
+
+# ── Step 4b: Normalize to Title Case ──────────────────────
+def normalize_location(text):
+    if not text:
+        return text
+    # Words that should stay lowercase in place names
+    lower_words = {"of", "the", "and", "de",
+                   "la", "le", "du", "van", "von", "al"}
+    words = text.strip().split()
+    result = []
+    for i, word in enumerate(words):
+        if i == 0 or word.lower() not in lower_words:
+            result.append(word.capitalize())
+        else:
+            result.append(word.lower())
+    return " ".join(result)
+
+# ── Step 5: Geocode via Nominatim ─────────────────────────
+
+
+def geocode_query(query):
+    """Try one Nominatim query, return (lat, lng) or (None, None)."""
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": query, "format": "json", "limit": 1}
+    headers = {"User-Agent": "ftc-world-map/1.0 (github.com/wel013/ftc-cn)"}
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=10)
+        print(f"  Nominatim status: {res.status_code} for '{query}'")
+        results = res.json()
+        print(f"  Nominatim results count: {len(results)}")
+        if results:
+            lat = float(results[0]["lat"])
+            lng = float(results[0]["lon"])
+            print(f"  ✓ Geocoded '{query}' → ({lat}, {lng})")
+            return lat, lng
+        return None, None
+    except Exception as e:
+        print(f"  Geocoding error: {e}")
+        return None, None
+
+
+def geocode(city, state, country):
+    # Try full query first
+    parts = [p for p in [city, state, country] if p]
+    if not parts:
+        return None, None
+
+    query = ", ".join(parts)
+    lat, lng = geocode_query(query)
+    if lat is not None:
+        return lat, lng
+
+    # Fallback: try without state
+    time.sleep(1)
+    if city and country:
+        lat, lng = geocode_query(f"{city}, {country}")
+        if lat is not None:
+            return lat, lng
+
+    # Fallback: try country only
+    time.sleep(1)
+    if country:
+        lat, lng = geocode_query(country)
+        if lat is not None:
+            print(f"  ⚠ Only geocoded to country level")
+            return lat, lng
+
+    print(f"  ✗ All geocoding attempts failed for: {query}")
+    return None, None
+
+# ── Step 6: Apply corrections to ftc_teams.json ───────────
+
+
+def apply_corrections(rows):
+    with open(FTC_JSON_PATH, "r", encoding="utf-8") as f:
+        teams = json.load(f)
+
+    # Deduplicate by number — keep last occurrence
+    seen = {}
+    for team in teams:
+        seen[str(team.get("number", "")).strip()] = team
+    teams = list(seen.values())
+
+    updated = 0
+    for row in rows:
+        team_num = str(row["team_number"]).strip()
+
+        # Translate any Chinese location fields to English
+        city = normalize_location(translate_to_english(row["city"]))
+        state = normalize_location(translate_to_english(row["state"]))
+        country = normalize_location(translate_to_english(row["country"]))
+        name_full = row["name_full"]   # names stay as-is (no translation)
+        name_short = row["name_short"]
+
+        print(
+            f"  Row data: team={team_num} city='{city}' state='{state}' country='{country}' name_full='{name_full}' name_short='{name_short}'")
+
+        # Re-geocode if any location field was provided
+        lat, lng = None, None
+        if city or state or country:
+            lat, lng = geocode(city, state, country)
+            time.sleep(1)  # Nominatim rate limit
+
+        for team in teams:
+            if str(team.get("number", "")).strip() == team_num.strip():
+                # Helper: only update if new value is non-empty
+                def upd(field, new_val):
+                    if new_val and new_val.strip():
+                        team[field] = new_val.strip()
+
+                # Update location fields (only if provided)
+                upd("city",      city)
+                upd("state",     state)
+                upd("country",   country)
+
+                # Update name fields (only if provided)
+                upd("nameFull",  name_full)
+                upd("nameShort", name_short)
+
+                # Update geocode_str only if at least one location field changed
+                if any([city, state, country]):
+                    team["geocode_str"] = ", ".join(
+                        filter(None, [
+                            team.get("city"),
+                            team.get("state"),
+                            team.get("country"),
+                        ])
+                    )
+
+                # Update lat/lng only if geocoding succeeded
+                if lat is not None:
+                    team["lat"] = lat
+                    team["lng"] = lng
+                    print(
+                        f"✓ Updated team {team_num} — location ({lat}, {lng})")
+                else:
+                    print(
+                        f"✓ Updated team {team_num} — text only (lat/lng unchanged)")
+
+                updated += 1
+                break
+        else:
+            print(f"✗ Team {team_num} not found — skipping")
+
+    with open(FTC_JSON_PATH, "w", encoding="utf-8") as f:
+        json.dump(teams, f, ensure_ascii=False, indent=2)
+
+    print(f"\n{updated} team(s) updated.")
+    return updated
+
+# ── Step 7: Mark rows as applied in Feishu ────────────────
+
+
+def mark_applied(token, record_ids):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    for rid in record_ids:
+        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records/{rid}"
+        requests.put(url, headers=headers, json={"fields": {"applied": True}})
+        print(f"Marked {rid} as applied")
+
+
+# ── Main ──────────────────────────────────────────────────
+if __name__ == "__main__":
+    print("Getting Feishu access token...")
+    token = get_access_token()
+
+    print("Fetching approved corrections...")
+    rows = get_approved_rows(token)
+    print(f"Found {len(rows)} approved correction(s)")
+
+    if not rows:
+        print("Nothing to apply.")
+    else:
+        apply_corrections(rows)
+        mark_applied(token, [r["record_id"] for r in rows])
+        print("Done!")
