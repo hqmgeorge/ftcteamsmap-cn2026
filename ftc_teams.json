@@ -34996,12 +34996,12 @@
     "nameFull": "Waimea High School",
     "nameShort": "Waimea Robotics",
     "school": null,
-    "city": "San Diego",
-    "state": "Ca",
+    "city": "Waimea",
+    "state": "Hawaii",
     "country": "Usa",
-    "geocode_str": "San Diego, Ca, Usa",
-    "lat": 32.7157062,
-    "lng": -117.1638284
+    "geocode_str": "Waimea, Hawaii, Usa",
+    "lat": 20.021702,
+    "lng": -155.6685878
   },
   {
     "number": 17449,
