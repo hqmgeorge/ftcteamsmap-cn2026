@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 
 # ── Config ────────────────────────────────────────────────
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
@@ -24,29 +25,104 @@ def get_access_token():
 
 # ── Step 2: Read approved + not yet applied rows ───────────
 
+def parse_submitted_at(value):
+    """
+    Convert Feishu submitted_at value into a datetime.
 
+    Expected format:
+        2026/09/20 12:25
+    """
+
+    if not value:
+        return datetime.min
+
+    value = str(value).strip()
+
+    formats = [
+        "%Y/%m/%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            pass
+
+    print(f"⚠ Could not parse submitted_at: '{value}'")
+    return datetime.min
 def get_approved_rows(token):
-    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records"
+    url = (
+        f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
+        f"{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records"
+    )
+
     headers = {"Authorization": f"Bearer {token}"}
+
     res = requests.get(url, headers=headers)
+    res.raise_for_status()
+
     records = res.json().get("data", {}).get("items", [])
 
     approved = []
+
     for r in records:
         fields = r.get("fields", {})
+
         is_approved = fields.get("approved", False)
-        is_applied = fields.get("applied", False)
-        if is_approved and not is_applied:
-            approved.append({
-                "record_id":   r["record_id"],
-                "team_number": str(int(float(fields.get("team_number", 0)))).strip(),
-                "city":        str(fields.get("new_city", "")).strip(),
-                "state":       str(fields.get("new_state", "")).strip(),
-                "country":     str(fields.get("new_country", "")).strip(),
-                "name_full":   str(fields.get("队名", "")).strip(),
-                "name_short":  str(fields.get("队名简称", "")).strip(),
-            })
-    return approved
+
+        if not is_approved:
+            continue
+
+        submitted_at = str(fields.get("submitted_at", "")).strip()
+
+        approved.append({
+            "record_id": r["record_id"],
+            "team_number": str(
+                int(float(fields.get("team_number", 0)))
+            ).strip(),
+            "city": str(fields.get("new_city", "")).strip(),
+            "state": str(fields.get("new_state", "")).strip(),
+            "country": str(fields.get("new_country", "")).strip(),
+            "name_full": str(fields.get("队名", "")).strip(),
+            "name_short": str(fields.get("队名简称", "")).strip(),
+            "submitted_at": submitted_at,
+        })
+
+    # ── Keep only the newest correction for each team ─────────
+    latest = {}
+
+    for row in approved:
+        team_num = row["team_number"]
+
+        if team_num not in latest:
+            latest[team_num] = row
+            continue
+
+        if parse_submitted_at(row["submitted_at"]) > parse_submitted_at(
+            latest[team_num]["submitted_at"]
+        ):
+            latest[team_num] = row
+
+    result = list(latest.values())
+
+    # Optional: process newest submissions first
+    result.sort(
+        key=lambda x: parse_submitted_at(x["submitted_at"]),
+        reverse=True
+    )
+
+    print(f"Approved rows found: {len(approved)}")
+    print(f"Latest correction per team: {len(result)}")
+
+    for row in result:
+        print(
+            f"  Team {row['team_number']} → "
+            f"{row['city']}, {row['state']}, {row['country']} "
+            f"(submitted_at: {row['submitted_at']})"
+        )
+
+    return result
 
 # ── Step 3: Detect Chinese characters ─────────────────────
 
@@ -230,38 +306,6 @@ def apply_corrections(rows):
 # ── Step 7: Mark rows as applied in Feishu ────────────────
 
 
-def mark_applied(token, record_ids):
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    for rid in record_ids:
-        url = (
-            f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
-            f"{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records/{rid}"
-        )
-
-        res = requests.put(
-            url,
-            headers=headers,
-            json={
-                "fields": {
-                    "applied": True
-                }
-            }
-        )
-
-        print(f"Feishu update response for {rid}:")
-        print(f"  Status: {res.status_code}")
-        print(f"  Body: {res.text}")
-
-        if res.ok:
-            print(f"✓ Successfully marked {rid} as applied")
-        else:
-            print(f"✗ Failed to mark {rid} as applied")
-
-
 # ── Main ──────────────────────────────────────────────────
 if __name__ == "__main__":
     print("Getting Feishu access token...")
@@ -277,7 +321,6 @@ if __name__ == "__main__":
         updated = apply_corrections(rows)
 
         if updated > 0:
-            mark_applied(token, [r["record_id"] for r in rows])
             print("Done!")
         else:
-            print("No teams were updated. Feishu rows will NOT be marked as applied.")
+            print("No teams were updated.")
