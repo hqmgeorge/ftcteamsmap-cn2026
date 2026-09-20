@@ -34996,12 +34996,12 @@
     "nameFull": "Waimea High School",
     "nameShort": "Waimea Robotics",
     "school": null,
-    "city": "Waimea",
-    "state": "Hawaii",
+    "city": "Ann Arbor",
+    "state": "Mi",
     "country": "Usa",
-    "geocode_str": "Waimea, Hawaii, Usa",
-    "lat": 20.021702,
-    "lng": -155.6685878
+    "geocode_str": "Ann Arbor, Mi, Usa",
+    "lat": 42.2813722,
+    "lng": -83.7484616
   },
   {
     "number": 17449,
