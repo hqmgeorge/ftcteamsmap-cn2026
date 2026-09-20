@@ -235,10 +235,31 @@ def mark_applied(token, record_ids):
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
+
     for rid in record_ids:
-        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records/{rid}"
-        requests.put(url, headers=headers, json={"fields": {"applied": True}})
-        print(f"Marked {rid} as applied")
+        url = (
+            f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
+            f"{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records/{rid}"
+        )
+
+        res = requests.put(
+            url,
+            headers=headers,
+            json={
+                "fields": {
+                    "applied": True
+                }
+            }
+        )
+
+        print(f"Feishu update response for {rid}:")
+        print(f"  Status: {res.status_code}")
+        print(f"  Body: {res.text}")
+
+        if res.ok:
+            print(f"✓ Successfully marked {rid} as applied")
+        else:
+            print(f"✗ Failed to mark {rid} as applied")
 
 
 # ── Main ──────────────────────────────────────────────────
@@ -253,6 +274,10 @@ if __name__ == "__main__":
     if not rows:
         print("Nothing to apply.")
     else:
-        apply_corrections(rows)
-        mark_applied(token, [r["record_id"] for r in rows])
-        print("Done!")
+        updated = apply_corrections(rows)
+
+        if updated > 0:
+            mark_applied(token, [r["record_id"] for r in rows])
+            print("Done!")
+        else:
+            print("No teams were updated. Feishu rows will NOT be marked as applied.")
