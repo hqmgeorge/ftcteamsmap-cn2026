@@ -44,19 +44,31 @@ def parse_submitted_at(value):
     except (ValueError, TypeError, OverflowError) as e:
         print(f"⚠ Could not parse submitted_at: '{value}' ({e})")
         return datetime.min
-        
-def get_approved_rows(token):
+
+
+def fetch_all_records(token):
     url = (
         f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
         f"{BITABLE_APP_TOKEN}/tables/{BITABLE_TABLE_ID}/records"
     )
-
     headers = {"Authorization": f"Bearer {token}"}
 
-    res = requests.get(url, headers=headers)
-    res.raise_for_status()
-
-    records = res.json().get("data", {}).get("items", [])
+    records, page_token = [], None
+    while True:
+        params = {"page_size": 500}
+        if page_token:
+            params["page_token"] = page_token
+        res = requests.get(url, headers=headers, params=params)
+        res.raise_for_status()
+        data = res.json().get("data", {})
+        records.extend(data.get("items", []))
+        if not data.get("has_more"):
+            break
+        page_token = data.get("page_token")
+    return records
+    
+def get_approved_rows(token):
+    records = fetch_all_records(token)
 
     approved = []
 
@@ -83,22 +95,29 @@ def get_approved_rows(token):
             "submitted_at": submitted_at,
         })
 
-    # ── Keep only the newest correction for each team ─────────
-    latest = {}
+    # ── Merge all approved corrections for each team ──────────
+    # Oldest first, so newer corrections override older ones field by field.
+    approved.sort(key=lambda r: parse_submitted_at(r["submitted_at"]))
+
+    FIELDS = ("city", "state", "country", "name_full", "name_short")
+    merged = {}
 
     for row in approved:
         team_num = row["team_number"]
+        m = merged.setdefault(team_num, {
+            "record_id": row["record_id"],
+            "team_number": team_num,
+            "city": "", "state": "", "country": "",
+            "name_full": "", "name_short": "",
+            "submitted_at": row["submitted_at"],
+        })
+        for k in FIELDS:
+            if row[k]:               # blank fields never overwrite earlier values
+                m[k] = row[k]
+        m["record_id"] = row["record_id"]
+        m["submitted_at"] = row["submitted_at"]
 
-        if team_num not in latest:
-            latest[team_num] = row
-            continue
-
-        if parse_submitted_at(row["submitted_at"]) > parse_submitted_at(
-            latest[team_num]["submitted_at"]
-        ):
-            latest[team_num] = row
-
-    result = list(latest.values())
+    result = list(merged.values())
 
     # Optional: process newest submissions first
     result.sort(
@@ -107,15 +126,15 @@ def get_approved_rows(token):
     )
 
     print(f"Approved rows found: {len(approved)}")
-    print(f"Latest correction per team: {len(result)}")
+    print(f"Teams with approved corrections: {len(result)}")
 
     for row in result:
         parsed_time = parse_submitted_at(row["submitted_at"])
         print(
             f"  Team {row['team_number']} → "
             f"{row['city']}, {row['state']}, {row['country']} "
-            f"(submitted_at: {row['submitted_at']} → "
-            f"{parsed_time.strftime('%Y-%m-%d %H:%M:%S')})"
+            f"| name: '{row['name_full']}' / '{row['name_short']}' "
+            f"(latest submitted_at: {parsed_time.strftime('%Y-%m-%d %H:%M:%S')})"
         )
 
     return result
