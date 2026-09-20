@@ -27,30 +27,24 @@ def get_access_token():
 
 def parse_submitted_at(value):
     """
-    Convert Feishu submitted_at value into a datetime.
+    Parse Feishu submitted_at timestamp.
 
-    Expected format:
-        2026/09/20 12:25
+    Feishu returns date/time fields as Unix timestamps
+    in milliseconds, e.g.:
+        1789874754000
     """
 
-    if not value:
+    if value is None or value == "":
         return datetime.min
 
-    value = str(value).strip()
-
-    formats = [
-        "%Y/%m/%d %H:%M",
-        "%Y/%m/%d %H:%M:%S",
-    ]
-
-    for fmt in formats:
-        try:
-            return datetime.strptime(value, fmt)
-        except ValueError:
-            pass
-
-    print(f"⚠ Could not parse submitted_at: '{value}'")
-    return datetime.min
+    try:
+        # Feishu date fields are Unix timestamps in milliseconds
+        timestamp_ms = int(float(value))
+        return datetime.fromtimestamp(timestamp_ms / 1000)
+    except (ValueError, TypeError, OverflowError) as e:
+        print(f"⚠ Could not parse submitted_at: '{value}' ({e})")
+        return datetime.min
+        
 def get_approved_rows(token):
     url = (
         f"https://open.feishu.cn/open-apis/bitable/v1/apps/"
@@ -116,10 +110,12 @@ def get_approved_rows(token):
     print(f"Latest correction per team: {len(result)}")
 
     for row in result:
+        parsed_time = parse_submitted_at(row["submitted_at"])
         print(
             f"  Team {row['team_number']} → "
             f"{row['city']}, {row['state']}, {row['country']} "
-            f"(submitted_at: {row['submitted_at']})"
+            f"(submitted_at: {row['submitted_at']} → "
+            f"{parsed_time.strftime('%Y-%m-%d %H:%M:%S')})"
         )
 
     return result
