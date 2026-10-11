@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FTC Teams World Map</title>
+    <title>FTC 队伍世界地图</title>
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -154,30 +154,34 @@
 
     <div id="panel">
         <div id="panel-header">
-            <h1>🤖 FTC Teams World Map</h1>
-            <p>FIRST Tech Challenge · All registered teams</p>
+            <h1>🤖 FTC 队伍世界地图</h1>
+            <p>FIRST Tech Challenge · 所有已注册队伍</p>
         </div>
 
         <div id="panel-body">
-            <input id="search" type="text" placeholder="Search name, number, city…" />
-
+            <!-- <input id="search" type="text" placeholder="Search name, number, city…" /> -->
+            <input id="search" type="text" placeholder="搜索队伍名称、编号或城市…" />
             <div id="filters">
                 <select id="country-filter">
-                    <option value="">All countries</option>
+                    <!-- <option value="">All countries</option> -->
+                    <option value="">所有国家/地区</option>
                 </select>
 
                 <select id="state-filter">
-                    <option value="">All states / provinces</option>
+                    <!-- <option value="">All states / provinces</option> -->
+                    <option value="">所有州/省</option>
                 </select>
             </div>
 
             <div id="stats">
                 <span>
-                    Showing <span id="team-count">Loading…</span>
+                    <!-- Showing <span id="team-count">Loading…</span> -->
+                     当前显示 <span id="team-count">加载中…</span> 支队伍
                 </span>
 
                 <button id="reset-btn" onclick="resetFilters()">
-                    Reset
+                    <!-- Reset -->
+                        重置筛选
                 </button>
             </div>
         </div>
@@ -668,7 +672,7 @@
             .catch(err => {
 
                 document.getElementById("team-count").textContent =
-                    "⚠ Could not load ftc_teams.json";
+                    "⚠ 无法加载队伍数据";
 
                 console.error(err);
             });
@@ -1052,7 +1056,7 @@
                                     class="report-link"
                                     onclick="openCorrectionForm(${JSON.stringify(t.number)})"
                                 >
-                                    Report wrong location
+                                    报告错误
                                 </button>
 
                             </div>
